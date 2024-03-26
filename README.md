@@ -7,3 +7,6 @@ This API is an intermediary between the client and the official Mojang skins ser
 `GET /skin/{nickname}`  
 Response Content-Type: `image/png`  
 This endpoint URL returns a Minecraft skin by nickname.
+
+`GET /search/{nickname fragment}`  
+Find all nicknames containing the provided nickname fragment.

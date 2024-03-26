@@ -8,14 +8,24 @@ import base64
 import json
 import time
 
-app = FastAPI()
 db = Prisma()
+
+
+async def lifespan(app: FastAPI):
+    await db.connect()  # Connecting to database
+    print("Connected to Data Base")
+    yield
+    await db.disconnect()  # Disconnecting from database
+
+
+app = FastAPI(lifespan=lifespan)
 ttl = 60 * 60 * 3  # 3 hrs
 
 origins = [
     "https://pplbandage.ru",
     "https://skinserver.pplbandage.ru",
-    "http://localhost:3000"
+    "http://localhost:3000",
+    "http://andcool.tplinkdns.com:3000"
 ]
 
 app.add_middleware(
@@ -25,12 +35,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-
-@app.on_event("startup")
-async def startup_event():
-    await db.connect()  # Connecting to database
-    print("Connected to Data Base")
 
 
 @app.get("/")
@@ -49,9 +53,11 @@ async def skin(nickname: str, request: Request):
         async with aiohttp.ClientSession() as session:
             async with session.get('https://api.mojang.com/users/profiles/minecraft/' + nickname) as response:
                 if response.status == 404:
+                    if cache:
+                        await db.file.delete(where={"id": cache.id})        
                     return JSONResponse(content={"status": "error", "message": "skin not found"}, status_code=404)
                 elif response.status != 200:
-                    return JSONResponse(content={"status": "error", "message": "unhandled error"}, status_code=500)
+                    return JSONResponse(content={"status": "error", "message": "unhandled error"}, status_code=response.status)
                 
                 response_json = await response.json()
             async with session.get('https://sessionserver.mojang.com/session/minecraft/profile/' + response_json['id']) as response_skin:
@@ -64,16 +70,34 @@ async def skin(nickname: str, request: Request):
                 if cache:
                     # If cache recod in db already exists, update data
                     await db.file.update(where={"id": cache.id}, data={"expires": int(time.time() + ttl), 
-                                                                        "data": base64_bytes})
+                                                                        "data": base64_bytes,
+                                                                        "default_nick": response_json["name"]})
                 else:
                     # Create record if not
                     await db.file.create(data={"nickname": nickname.lower(), 
-                                                "expires": int(time.time() + ttl), 
-                                                "data": base64_bytes})
+                                               "expires": int(time.time() + ttl), 
+                                               "data": base64_bytes,
+                                               "default_nick": response_json["name"]})
                 return Response(bytes, media_type="image/png")
     except Exception as e:
         print(e)
         return JSONResponse(content={"status": "error", "message": "unhandled error"}, status_code=500)
+
+
+@app.get("/search/{nickname}")
+async def search(nickname: str, request: Request):
+    if len(nickname) < 2:
+        return Response(status_code=204)
+
+    cache = await db.file.find_many(where={"nickname": {"contains": nickname}}, order={"default_nick": "asc"})  # Find cache records in db
+    if not cache:
+        return Response(status_code=204)
+
+    return JSONResponse(content={
+        "status": "success", 
+        "requestedFragment": nickname, 
+        "data": [nick.default_nick for nick in cache]
+        }, status_code=200)
 
 
 if __name__ == "__main__":
