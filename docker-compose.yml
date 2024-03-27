@@ -1,0 +1,10 @@
+services:
+  skinserver:
+    container_name: skinserver
+    volumes:
+      - /root/skinserver:/app
+    build: 
+      context: ./
+      dockerfile: Dockerfile
+    command: python3 main.py
+    restart: unless-stopped
