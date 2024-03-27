@@ -19,7 +19,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(lifespan=lifespan)
-ttl = 60 * 60 * 3  # 3 hrs
+ttl = 60 * 60 * 3  # 3 hours
 
 origins = [
     "https://pplbandage.ru",
