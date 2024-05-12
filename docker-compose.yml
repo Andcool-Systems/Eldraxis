@@ -8,5 +8,4 @@ services:
     build: 
       context: ./
       dockerfile: Dockerfile
-    command: python3 main.py
     restart: unless-stopped
