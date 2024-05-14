@@ -18,4 +18,5 @@ model File {
   nickname     String  @default("")
   expires      BigInt  @default(0)
   default_nick String  @default("")
+  valid        Boolean @default(true)
 }

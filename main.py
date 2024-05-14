@@ -7,7 +7,6 @@ import uvicorn
 import aiohttp
 import base64
 import io
-import PIL
 import json
 import time
 
@@ -118,18 +117,21 @@ async def skin(nickname: str, request: Request, cape: bool = False):
 
 
 @app.get("/search/{nickname}")
-async def search(nickname: str, request: Request):
+async def search(nickname: str, request: Request, take: int = 20, page: int = 0):
     if len(nickname) < 3:
         return Response(status_code=204)
 
-    cache = await db.file.find_many(where={"nickname": {"contains": nickname}}, order={"default_nick": "asc"}, take=20)  # Find cache records in db
+    cache = await db.file.find_many(where={"nickname": {"contains": nickname}, "valid": True}, order={"default_nick": "asc"}, take=take, skip=take * page)  # Find cache records in db
+    count = await db.file.count(where={"nickname": {"contains": nickname}, "valid": True})
     if not cache:
         return Response(status_code=204)
 
     return JSONResponse(content={
         "status": "success", 
         "requestedFragment": nickname, 
-        "data": [{"name": nick.default_nick, "head": nick.data_head} for nick in cache]
+        "data": [{"name": nick.default_nick, "head": nick.data_head} for nick in cache],
+        "total_count": count,
+        "next_page": page + 1
         }, status_code=200)
 
 
