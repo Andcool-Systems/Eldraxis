@@ -1,17 +1,23 @@
+"""
+Eldraxis project
+
+AndcoolSystems, 2024
+"""
+
 import PIL.Image
-from fastapi.responses import JSONResponse, Response, RedirectResponse
+from fastapi.responses import JSONResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi import FastAPI, Request
 from minepi import Skin
-import prisma
+from typing import List
 import uvicorn
 import aiohttp
 import base64
-import io
-import re
+import prisma
 import json
 import time
-from typing import List
+import io
+import re
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
