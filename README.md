@@ -21,7 +21,32 @@ Retrieve a skin by nickname.
 > [!NOTE]
 > If your account does not have a cape, the `cape` field in the server response will be an empty string.
 
-## Search by Nickname
+
+## Get 2D head by nickname
+`GET /head/{nickname}`  
+Returns image of minecraft skin head by nickname.  
+`Content-Type: image/png`  
+> [!NOTE]
+> The request is subject to caching
+
+
+## Get 3D head by nickname
+`GET /head3d/{nickname}?v=-25&h=45`  
+Returns image of 3D render of minecraft skin head by nickname.  
+`Content-Type: image/png`  
+> The parameters `v` and `h` are responsible for the vertical and horizontal rotation of the render, respectively. The standard values are shown in the sample query (-25, 45).  
+
+> [!NOTE]
+> The request is subject to caching
+
+## Get cape by nickname
+`GET /cape/{nickname}`  
+Returns image of minecraft account cape by nickname.  
+`Content-Type: image/png`  
+> [!NOTE]
+> The request is subject to caching
+
+## Search by nickname
 `GET /search/{nickname-fragment}?take=<take>&page=<page>`  
 This endpoint will return all cached entries whose nickname contains the given fragment.
 

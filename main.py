@@ -1,7 +1,8 @@
 import PIL.Image
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import JSONResponse, Response, RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi import FastAPI, Request
+from fastapi import FastAPI
+from minepi import Skin
 from prisma import Prisma
 import uvicorn
 import aiohttp
@@ -23,29 +24,17 @@ async def lifespan(app: FastAPI):
 app = FastAPI(lifespan=lifespan)
 ttl = 60 * 60 * 3  # 3 hours
 
-origins = [
-    "https://pplbandage.ru",
-    "https://skinserver.pplbandage.ru",
-    "http://localhost:3000",
-    "http://andcool.tplinkdns.com:3000"
-]
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 
-@app.get("/")
-async def root():
-    return JSONResponse(content={"status": "error", "message": "invalid url, go to /skin/"}, status_code=400)
-
-
-@app.get("/skin/{nickname}")
-async def skin(nickname: str, request: Request, cape: bool = False):
+async def updateSkinCache(nickname: str, cape: bool = False) -> JSONResponse:
     cache = await db.file.find_first(where={"nickname": nickname.lower()})  # Find cache record in db
     if cache and cache.expires > time.time():
         # If cache record is valid send cached skin
@@ -116,8 +105,53 @@ async def skin(nickname: str, request: Request, cape: bool = False):
         return JSONResponse(content={"status": "error", "message": "unhandled error"}, status_code=500)
 
 
+@app.get("/")
+async def root():
+    return RedirectResponse("https://pplbandage.ru")
+
+
+@app.get("/skin/{nickname}")
+async def skin(nickname: str, cape: bool = False):
+    return await updateSkinCache(nickname=nickname, cape=cape)
+
+
+@app.get("/head3d/{nickname}")
+async def head3d(nickname: str, v: int = -25, h: int = 45):
+    response = await updateSkinCache(nickname=nickname)
+    if response.status_code != 200:
+        return response
+    
+    cache = await db.file.find_first(where={"nickname": nickname.lower()})
+    skin_img = PIL.Image.open(io.BytesIO(base64.b64decode(cache.data)))
+    skin = Skin(skin_img)
+    await skin.render_head(vr=v, hr=h, ratio=32)
+    buffered = io.BytesIO()
+    skin.head.save(buffered, format="PNG")
+    return Response(buffered.getvalue(), media_type="image/png")
+
+
+@app.get("/head/{nickname}")
+async def head(nickname: str):
+    response = await updateSkinCache(nickname=nickname)
+    if response.status_code != 200:
+        return response
+    
+    cache = await db.file.find_first(where={"nickname": nickname.lower()})
+    return Response(base64.b64decode(cache.data_head), media_type="image/png")
+
+
+@app.get("/cape/{nickname}")
+async def cape(nickname: str):
+    response = await updateSkinCache(nickname=nickname)
+    if response.status_code != 200:
+        return response
+    
+    cache = await db.file.find_first(where={"nickname": nickname.lower()})
+    return Response(base64.b64decode(cache.data_cape), media_type="image/png")
+
+
 @app.get("/search/{nickname}")
-async def search(nickname: str, request: Request, take: int = 20, page: int = 0):
+async def search(nickname: str, take: int = 20, page: int = 0):
     if len(nickname) < 3:
         return Response(status_code=204)
 

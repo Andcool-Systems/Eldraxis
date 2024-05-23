@@ -3,3 +3,4 @@ prisma
 uvicorn
 aiohttp
 pillow
+MinePI
