@@ -3,18 +3,20 @@ from fastapi.responses import JSONResponse, Response, RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi import FastAPI, Request
 from minepi import Skin
-from prisma import Prisma
+import prisma
 import uvicorn
 import aiohttp
 import base64
 import io
+import re
 import json
 import time
+from typing import List
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 
-db = Prisma()
+db = prisma.Prisma()
 
 
 async def lifespan(app: FastAPI):
@@ -40,46 +42,73 @@ app.add_middleware(
 )
 
 
+def generateHead(skin: PIL.Image.Image) -> PIL.Image.Image:
+    head = PIL.Image.new("RGBA", (36, 36), (0, 0, 0, 0))
+    first_layer = skin.crop((8, 8, 16, 16)).resize(size=(32, 32), resample=PIL.Image.Resampling.NEAREST)
+    second_layer = skin.crop((40, 8, 48, 16)).resize(size=(36, 36), resample=PIL.Image.Resampling.NEAREST)
+    head.paste(first_layer, (2, 2), first_layer)
+    head.paste(second_layer, (0, 0), second_layer)
+    return head
+
+
+async def getUserData(string: str):
+    pattern = re.compile(r'^[0-9a-fA-F]{32}$')
+    uuid = string
+    async with aiohttp.ClientSession() as session:
+        if not bool(pattern.match(string)):
+            async with session.get('https://api.mojang.com/users/profiles/minecraft/' + string) as response:
+                if response.status != 200:
+                    return None
+                uuid = (await response.json())['id']
+            
+        async with session.get('https://sessionserver.mojang.com/session/minecraft/profile/' + uuid) as response_skin:
+            if response_skin.status != 200:
+                return None
+            return await response_skin.json()
+        
+
+async def resolveCollisions(records: List[prisma.models.File]):
+    for record in records:
+        data = await getUserData(record.uuid)
+        if not data:
+            await db.file.delete(where={"uuid": data["id"]})
+            continue
+        await db.file.update(where={"uuid": data["id"]},
+                             data={"default_nick": data["name"],
+                                   "nickname": data["name"].lower()})
+
+
 async def updateSkinCache(nickname: str, cape: bool = False) -> JSONResponse:
-    cache = await db.file.find_first(where={"nickname": nickname.lower()})  # Find cache record in db
+    fetched_skin_data = await getUserData(nickname)  # Get account data
+    if not fetched_skin_data:
+        return JSONResponse(content={"status": "error", "message": "Profile not found"}, status_code=404)
+    
+    nicks = await db.file.find_many(where={"default_nick": fetched_skin_data["name"]})
+    if len(nicks) > 1:
+        await resolveCollisions(nicks)
+    
+    cache = await db.file.find_first(where={"uuid": fetched_skin_data["id"]})  # Find cache record in db
     if cache and cache.expires > time.time():
-        # If cache record is valid send cached skin
+        if cache.default_nick != fetched_skin_data["name"]:
+            await db.file.update(where={"uuid": fetched_skin_data["id"]}, data={"default_nick": fetched_skin_data["name"],
+                                                               "nickname": fetched_skin_data["name"].lower()})
         if not cape:
             return Response(base64.b64decode(cache.data), media_type="image/png")
         return JSONResponse(content={"status": "success", "data": {"skin": cache.data, "cape": cache.data_cape}})
 
     try:
         async with aiohttp.ClientSession() as session:
-            async with session.get('https://api.mojang.com/users/profiles/minecraft/' + nickname) as response:
-                if response.status == 404:
-                    if cache:
-                        await db.file.delete(where={"id": cache.id})        
-                    return JSONResponse(content={"status": "error", "message": "skin not found"}, status_code=404)
-                elif response.status != 200:
-                    return JSONResponse(content={"status": "error", "message": "unhandled error"}, status_code=response.status)
-                
-                response_json = await response.json()
-            async with session.get('https://sessionserver.mojang.com/session/minecraft/profile/' + response_json['id']) as response_skin:
-                response_json_skin = await response_skin.json()
-                urls = json.loads(base64.b64decode(response_json_skin['properties'][0]['value']))['textures']
+            urls = json.loads(base64.b64decode(fetched_skin_data['properties'][0]['value']))['textures']
 
             async with session.get(urls['SKIN']['url']) as response_skin_img:
                 bytes = await response_skin_img.content.read()  # Get skin bytes
                 base64_bytes = base64.b64encode(bytes).decode("utf-8")  # Convert bytes to base64
+                
                 skin_img = PIL.Image.open(io.BytesIO(bytes))
-                head = PIL.Image.new("RGBA", (36, 36), (0, 0, 0, 0))
-                first_layer = skin_img.crop((8, 8, 16, 16)).resize(size=(32, 32), resample=PIL.Image.Resampling.NEAREST)
-                second_layer = skin_img.crop((40, 8, 48, 16)).resize(size=(36, 36), resample=PIL.Image.Resampling.NEAREST)
-                head.paste(first_layer, (2, 2), first_layer)
-                head.paste(second_layer, (0, 0), second_layer)
+                head = generateHead(skin_img)  # Generate avatar
                 buffered = io.BytesIO()
                 head.save(buffered, format="PNG")
                 base64_head = base64.b64encode(buffered.getvalue()).decode("utf-8")
-                skin_img.close()
-                head.close()
-                first_layer.close()
-                second_layer.close()
-
 
             cape_base64 = ""
             if "CAPE" in urls:
@@ -87,22 +116,24 @@ async def updateSkinCache(nickname: str, cape: bool = False) -> JSONResponse:
                     cape_bytes = await response_skin_img.content.read()  # Get skin bytes
                     cape_base64 = base64.b64encode(cape_bytes).decode("utf-8")  # Convert bytes to base64
 
-            
-            await db.file.upsert(where={"id": cache.id if cache else 0}, data={
-                                                                'create': {
-                                                                    "nickname": nickname.lower(),
-                                                                    "default_nick": response_json["name"],
-                                                                    "expires": int(time.time() + ttl),
-                                                                    "data": base64_bytes,
-                                                                    "data_cape": cape_base64,
-                                                                    "data_head": base64_head
-                                                                },
-                                                                'update': {
-                                                                    "expires": int(time.time() + ttl), 
-                                                                    "data": base64_bytes,
-                                                                    "data_cape": cape_base64,
-                                                                    "data_head": base64_head
-                                                                }})
+            await db.file.upsert(where={"uuid": fetched_skin_data["id"]}, 
+                                 data={'create': {
+                                            "uuid": fetched_skin_data["id"],
+                                            "nickname": fetched_skin_data["name"].lower(),
+                                            "default_nick": fetched_skin_data["name"],
+                                            "expires": int(time.time() + ttl), 
+                                            "data": base64_bytes,
+                                            "data_cape": cape_base64,
+                                            "data_head": base64_head
+                                        },
+                                        'update': {
+                                            "nickname": fetched_skin_data["name"].lower(),
+                                            "default_nick": fetched_skin_data["name"],
+                                            "expires": int(time.time() + ttl), 
+                                            "data": base64_bytes,
+                                            "data_cape": cape_base64,
+                                            "data_head": base64_head
+                                        }})
             if not cape:
                 return Response(bytes, media_type="image/png")
             return JSONResponse(content={"status": "success", "data": {"skin": base64_bytes, "cape": cape_base64}})
@@ -113,7 +144,7 @@ async def updateSkinCache(nickname: str, cape: bool = False) -> JSONResponse:
 
 @app.get("/")
 async def root():
-    return RedirectResponse("https://pplbandage.ru")
+    return JSONResponse(content={"status": "success", "message": "Welcome to eldraxis!"})
 
 
 @app.get("/skin/{nickname}")
@@ -174,7 +205,7 @@ async def search(request: Request, nickname: str, take: int = 20, page: int = 0)
     return JSONResponse(content={
         "status": "success", 
         "requestedFragment": nickname, 
-        "data": [{"name": nick.default_nick, "head": nick.data_head} for nick in cache],
+        "data": [{"name": nick.default_nick, "uuid": nick.uuid, "head": nick.data_head} for nick in cache],
         "total_count": count,
         "next_page": page + 1
         }, status_code=200)
