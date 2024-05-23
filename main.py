@@ -117,13 +117,13 @@ async def root():
 
 
 @app.get("/skin/{nickname}")
-@limiter.limit("15/minute")
+@limiter.limit("100/minute")
 async def skin(request: Request, nickname: str, cape: bool = False):
     return await updateSkinCache(nickname=nickname, cape=cape)
 
 
 @app.get("/head3d/{nickname}")
-@limiter.limit("15/minute")
+@limiter.limit("100/minute")
 async def head3d(request: Request, nickname: str, v: int = -25, h: int = 45):
     response = await updateSkinCache(nickname=nickname)
     if response.status_code != 200:
@@ -139,7 +139,7 @@ async def head3d(request: Request, nickname: str, v: int = -25, h: int = 45):
 
 
 @app.get("/head/{nickname}")
-@limiter.limit("15/minute")
+@limiter.limit("100/minute")
 async def head(request: Request, nickname: str):
     response = await updateSkinCache(nickname=nickname)
     if response.status_code != 200:
@@ -150,7 +150,7 @@ async def head(request: Request, nickname: str):
 
 
 @app.get("/cape/{nickname}")
-@limiter.limit("15/minute")
+@limiter.limit("100/minute")
 async def cape(request: Request, nickname: str):
     response = await updateSkinCache(nickname=nickname)
     if response.status_code != 200:
@@ -161,7 +161,7 @@ async def cape(request: Request, nickname: str):
 
 
 @app.get("/search/{nickname}")
-@limiter.limit("15/minute")
+@limiter.limit("100/minute")
 async def search(request: Request, nickname: str, take: int = 20, page: int = 0):
     if len(nickname) < 3:
         return Response(status_code=204)
