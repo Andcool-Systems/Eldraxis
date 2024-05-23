@@ -1,7 +1,9 @@
 # Simple Minecraft Skin API
 This API is for [pplbandage.ru](https://pplbandage.ru).
 
-This API acts as an intermediary between the client and the official Mojang skins server. For greater convenience, the API caches incoming requests for 3 hours. Unlike the official Mojang skins server, this API requires only one request to obtain a skin image by nickname.
+This API acts as an intermediary between the client and the official Mojang skins server. For greater convenience, the API caches incoming requests for 3 hours. Unlike the official Mojang skins server, this API requires only one request to obtain a skin image by nickname.    
+
+The rate limit for all endpoints is 15 requests per minute.
 
 ## Usage
 `GET /skin/{nickname}?cape=<bool>`  

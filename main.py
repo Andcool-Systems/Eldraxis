@@ -1,7 +1,7 @@
 import PIL.Image
 from fastapi.responses import JSONResponse, Response, RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from minepi import Skin
 from prisma import Prisma
 import uvicorn
@@ -10,6 +10,9 @@ import base64
 import io
 import json
 import time
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 
 db = Prisma()
 
@@ -21,7 +24,10 @@ async def lifespan(app: FastAPI):
     await db.disconnect()  # Disconnecting from database
 
 
+limiter = Limiter(key_func=get_remote_address)
 app = FastAPI(lifespan=lifespan)
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 ttl = 60 * 60 * 3  # 3 hours
 
 
@@ -111,12 +117,14 @@ async def root():
 
 
 @app.get("/skin/{nickname}")
-async def skin(nickname: str, cape: bool = False):
+@limiter.limit("15/minute")
+async def skin(request: Request, nickname: str, cape: bool = False):
     return await updateSkinCache(nickname=nickname, cape=cape)
 
 
 @app.get("/head3d/{nickname}")
-async def head3d(nickname: str, v: int = -25, h: int = 45):
+@limiter.limit("15/minute")
+async def head3d(request: Request, nickname: str, v: int = -25, h: int = 45):
     response = await updateSkinCache(nickname=nickname)
     if response.status_code != 200:
         return response
@@ -131,7 +139,8 @@ async def head3d(nickname: str, v: int = -25, h: int = 45):
 
 
 @app.get("/head/{nickname}")
-async def head(nickname: str):
+@limiter.limit("15/minute")
+async def head(request: Request, nickname: str):
     response = await updateSkinCache(nickname=nickname)
     if response.status_code != 200:
         return response
@@ -141,7 +150,8 @@ async def head(nickname: str):
 
 
 @app.get("/cape/{nickname}")
-async def cape(nickname: str):
+@limiter.limit("15/minute")
+async def cape(request: Request, nickname: str):
     response = await updateSkinCache(nickname=nickname)
     if response.status_code != 200:
         return response
@@ -151,7 +161,8 @@ async def cape(nickname: str):
 
 
 @app.get("/search/{nickname}")
-async def search(nickname: str, take: int = 20, page: int = 0):
+@limiter.limit("15/minute")
+async def search(request: Request, nickname: str, take: int = 20, page: int = 0):
     if len(nickname) < 3:
         return Response(status_code=204)
 

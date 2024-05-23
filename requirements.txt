@@ -4,3 +4,4 @@ uvicorn
 aiohttp
 pillow
 MinePI
+slowapi
