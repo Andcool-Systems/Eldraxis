@@ -8,6 +8,7 @@ import PIL.Image
 from fastapi.responses import JSONResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi import FastAPI, Request
+from fastapi import FastAPI, Header
 from minepi import Skin
 from typing import List
 import uvicorn
@@ -18,6 +19,7 @@ import json
 import time
 import io
 import re
+from typing import Annotated
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
@@ -57,9 +59,20 @@ def generateHead(skin: PIL.Image.Image) -> PIL.Image.Image:
     return head
 
 
+def uuidToDashed(uuid):
+    uuid_list = list(uuid)
+
+    uuid_list.insert(8, "-")
+    uuid_list.insert(13, "-")
+    uuid_list.insert(18, "-")
+    uuid_list.insert(23, "-")
+    
+    return "".join(uuid_list)
+
+
 async def getUserData(string: str):
     pattern = re.compile(r'^[0-9a-fA-F]{32}$')
-    uuid = string
+    uuid = string.replace("-", "")
     async with aiohttp.ClientSession() as session:
         if not bool(pattern.match(string)):
             async with session.get('https://api.mojang.com/users/profiles/minecraft/' + string) as response:
@@ -84,7 +97,7 @@ async def resolveCollisions(records: List[prisma.models.File]):
                                    "nickname": data["name"].lower()})
 
 
-async def updateSkinCache(nickname: str, cape: bool = False) -> JSONResponse:
+async def updateSkinCache(nickname: str, cape: bool = False, ignore_cache: bool = False) -> JSONResponse:
     fetched_skin_data = await getUserData(nickname)  # Get account data
     if not fetched_skin_data:
         return JSONResponse(content={"status": "error", "message": "Profile not found"}, status_code=404)
@@ -94,7 +107,7 @@ async def updateSkinCache(nickname: str, cape: bool = False) -> JSONResponse:
         await resolveCollisions(nicks)
     
     cache = await db.file.find_first(where={"uuid": fetched_skin_data["id"]})  # Find cache record in db
-    if cache and cache.expires > time.time():
+    if cache and cache.expires > time.time() and not ignore_cache:
         if cache.default_nick != fetched_skin_data["name"]:
             await db.file.update(where={"uuid": fetched_skin_data["id"]}, data={"default_nick": fetched_skin_data["name"],
                                                                "nickname": fetched_skin_data["name"].lower()})
@@ -155,8 +168,11 @@ async def root():
 
 @app.get("/skin/{nickname}")
 @limiter.limit("100/minute")
-async def skin(request: Request, nickname: str, cape: bool = False):
-    return await updateSkinCache(nickname=nickname, cape=cape)
+async def skin(request: Request, nickname: str, cape: bool = False, Cache_Control: Annotated[str | None, Header()] = None):
+    response = await updateSkinCache(nickname=nickname, cape=cape, ignore_cache=Cache_Control == "no-cache")
+    if Cache_Control == "no-cache":
+        response.raw_headers.append(("Cache-control", "no-cache"))
+    return response
 
 
 @app.get("/head3d/{nickname}")
@@ -195,6 +211,37 @@ async def cape(request: Request, nickname: str):
     
     cache = await db.file.find_first(where={"nickname": nickname.lower()})
     return Response(base64.b64decode(cache.data_cape), media_type="image/png")
+
+
+@app.get("/profile/{nickname}")
+@limiter.limit("100/minute")
+async def profile(request: Request, nickname: str):
+    response = await getUserData(string=nickname)
+    if not response:
+        return JSONResponse({"status": "error", "message": "Not found"}, status_code=404)
+    
+    data = json.loads(base64.b64decode(response['properties'][0]['value']))
+    search = await db.file.find_first(where={"uuid": data["profileId"], "valid": True})
+    return JSONResponse({"status": "success",
+                         "message": "",
+                         "timestamp": data["timestamp"],
+                         "uuid": data["profileId"],
+                         "uuid_dashed": uuidToDashed(data["profileId"]),
+                         "nickname": data["profileName"],
+                         "textures": {
+                             "SKIN": {
+                                 "mojang": data["textures"]["SKIN"]["url"],
+                                 "eldraxis": "https://eldraxis.andcool.ru/skin/" + data["profileId"]
+                             },
+                             "CAPE": {
+                                 "mojang": data["textures"]["CAPE"]["url"],
+                                 "eldraxis": "https://eldraxis.andcool.ru/cape/" + data["profileId"]
+                             } if "CAPE" in data["textures"] else None
+                         },
+                         "eldraxis_cache":{
+                            "available_in_search": bool(search),
+                            "last_cached": (search.expires - ttl) * 1000 if search else None
+                         }})
 
 
 @app.get("/search/{nickname}")
