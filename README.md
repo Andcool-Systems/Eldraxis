@@ -1,4 +1,5 @@
 # Eldraxis project
+[![Made for pepeland](https://andcool.ru/static/badges/made-for-ppl.svg)](https://pepeland.net)  
 This API acts as an intermediary between the client and the official Mojang skins server. For greater convenience, the API caches incoming requests for 3 hours. Unlike the official Mojang skins server, this API requires only one request to obtain a skin image by nickname.    
 
 The rate limit for all endpoints is 100 requests per minute.
